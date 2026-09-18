@@ -1,0 +1,56 @@
+.TH CPPIC 1 "2026-09-18" "cppic 0.1.0" "User Commands"
+.SH NAME
+cppic \- C++ to C transpiler for PIC18 microcontrollers
+.SH SYNOPSIS
+.B cppic
+[\fI--lex\fR | \fI--dump\fR | \fI--emit\fR] \fIfile.cpp\fR
+.SH DESCRIPTION
+.B cppic
+compiles the C++ subset used in Arduino sketches (object-oriented C++)
+into plain C suitable for SDCC and 8-bit PIC18 microcontrollers.
+The generated C is self-contained and includes the PIC18 runtime.
+.PP
+Modes:
+.TP
+.BR \-\-lex
+print the token stream.
+.TP
+.BR \-\-dump
+print the parsed AST.
+.TP
+.BR \-\-emit
+transpile to C (default for .cpp files with setup/loop).
+.SH EXAMPLES
+Generate C from an Arduino-style sketch:
+.PP
+.nf
+    cppic --emit sketch.cpp > sketch.c
+.fi
+.PP
+Build a PIC18 Intel HEX image (requires the sdcc package):
+.PP
+.nf
+    sdcc -mpic18 -p18f87k22 -I/usr/share/cppic/runtime \\
+         sketch.c /usr/share/cppic/runtime/cppic_runtime.c
+.fi
+.PP
+Test the sketch on the desktop simulator:
+.PP
+.nf
+    cc -DCPPIC_HOST_SIM -I/usr/share/cppic/runtime \\
+       -o sketch sketch.c /usr/share/cppic/runtime/cppic_runtime.c
+.fi
+.SH FILES
+.TP
+.I /usr/share/cppic/runtime/cppic_runtime.h
+runtime header included by generated code (also provides the instant
+heaps implementing new/delete).
+.TP
+.I /usr/share/cppic/runtime/cppic_runtime.c
+runtime implementation (heap + host simulator).
+.SH EXIT STATUS
+Returns 0 on success, 1 on lex/parse/transpile errors, 2 on usage errors.
+.SH AUTHOR
+Marcin Filipiak <m.filipiak@noweenergie.org>
+.SH BUGS
+Report bugs at https://github.com/marcin-filipiak/cppic/issues

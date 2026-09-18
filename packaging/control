@@ -1,0 +1,23 @@
+Package: cppic
+Version: @VERSION@
+Section: devel
+Priority: optional
+Architecture: @ARCH@
+Depends: libc6 (>= 2.34), libgcc-s1 (>= 4.2), libstdc++6 (>= 12)
+Recommends: sdcc
+Installed-Size: @SIZE@
+Maintainer: Marcin Filipiak <m.filipiak@noweenergie.org>
+Description: C++ -> C transpiler for PIC18 microcontrollers
+ cppic compiles the C++ subset used in Arduino sketches (object-oriented
+ C++) into plain C for SDCC and the 8-bit microcontrollers of the PIC18
+ family.  The emitted C is self-contained (no external libraries).
+ .
+ The package ships the transpiler binary plus the PIC18 runtime: a
+ desktop simulator (emulated SFRs, setup()/loop() harness) and a small
+ bare-metal heap that implements C++ new/delete.
+ .
+ Install the recommended sdcc package to turn the emitted C into a real
+ PIC18 Intel HEX firmware image, e.g.:
+   cppic --emit sketch.cpp > sketch.c
+   sdcc -mpic18 -p18f87k22 -I/usr/share/cppic/runtime \
+        sketch.c /usr/share/cppic/runtime/cppic_runtime.c

@@ -1,0 +1,10 @@
+cppic (0.1.0-1) unstable; urgency=medium
+
+  * Initial packaged release of the C++ -> C transpiler for PIC18.
+  * Ships the transpiler binary and the PIC18 runtime: desktop simulator
+    (emulated SFRs, setup()/loop() harness) and a bare-metal heap that
+    implements C++ new/delete.
+  * Backend for SDCC/Intel HEX provided via the recommended sdcc package
+    (scripts/build.sh --sdcc or the hex-blink CMake target).
+
+ -- Marcin Filipiak <m.filipiak@noweenergie.org>  Fri, 18 Sep 2026 11:00:00 +0200

@@ -75,6 +75,53 @@ build/cppic --emit  tests/samples/blink.cpp   # kod C (domyślny tryb)
 - CMake ≥ 3.16, kompilator C++20 (g++) i C (cc)
 - SDCC (`apt install sdcc`) do generowania HEX
 
+## Pakiet .deb / dystrybucja
+
+Skrypt `packaging/build-deb.sh` buduje skompilowany program (konfiguracja
+Release), pakuje go do debiana razem z runtime i wypakowuje wszystko do
+katalogu `dist/`:
+
+```sh
+CMAKE=/path/to/cmake ./packaging/build-deb.sh     # CMAKE tylko gdy brak cmake na PATH
+# lub: ./packaging/build-deb.sh --clean            # odśwież od zera
+```
+
+Wynik w `dist/`:
+
+```
+dist/
+├── bin/cppic                        # skompilowany program (Release, stripped)
+├── runtime/
+│   ├── cppic_runtime.h              # nagłówki runtime dla generowanego C
+│   └── cppic_runtime.c              # sterta new/delete + symulator
+├── README.md
+└── cppic_0.1.0-1_amd64.deb          # pakiet instalacyjny
+```
+
+Zależności pakietu (pole `Depends`/`Recommends` w `packaging/control`,
+zweryfikowane przez `readelf`/`ldd`):
+
+- `Depends`: `libc6 (>= 2.34)`, `libgcc-s1 (>= 4.2)`, `libstdc++6 (>= 12)`
+  — wymagane przez binarkę (GLIBC 2.34 / GLIBCXX 3.4.29, g++ 12)
+- `Recommends`: `sdcc` — niezbędny do emisji HEX (backend PIC18)
+
+Instalacja:
+
+```sh
+sudo dpkg -i dist/cppic_0.1.0-1_amd64.deb     # sprawdzi zależności i zainstaluje
+# lub ręcznie z rozwiązywaniem zależności:
+sudo apt install ./dist/cppic_0.1.0-1_amd64.deb
+```
+
+Po instalacji `cppic` trafia do `/usr/bin`, runtime do
+`/usr/share/cppic/runtime/`, man na `man cppic`:
+
+```sh
+cppic --emit sketch.cpp > sketch.c
+sdcc -mpic18 -p18f87k22 -I/usr/share/cppic/runtime \
+     sketch.c /usr/share/cppic/runtime/cppic_runtime.c
+```
+
 ## Status
 
 - [x] Lexer (tokenizer podzbioru C++)

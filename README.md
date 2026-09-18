@@ -110,6 +110,42 @@ Nagłówki `#include "..."` w każdym z plików są wyszukiwane względem
 katalogu danego pliku (oraz katalogów dodanych `--I dir`).
 Pliki headerowe nie muszą być wymieniane na liście argumentów.
 
+## Typ `String` (Arduino-style)
+
+`String` jest typem wbudowanym opartym o runtime (`CppicString` oraz
+funkcje `cppic_string_*` z `cppic_runtime.c`). Obsługiwane:
+
+- deklaracja i inicjalizacja literałem: `String s = "abc";`
+- przypisanie i głęboka kopia: `s = "abc"; s = other;`
+- konkatenacja w przypisaniu/inicjalizacji: `s = a + "x"; s = a + b;`
+- dopisywanie: `s += "x"; s += other;`
+- porównania: `==`, `!=`, `<`, `<=`, `>`, `>=` (z `String` i literałem)
+- metody: `length()`, `charAt(i)`, `c_str()`, `isEmpty()`,
+  `startsWith(s)`, `endsWith(s)`, `indexOf(c)` / `indexOf("s")`
+- indeksowanie tylko do odczytu: `s[i]` → `cppic_string_char_at(...)`
+
+```cpp
+String msg = "Hello";
+
+void setup() {
+    msg = msg + ", world";
+    msg += "!";
+    if (msg.length() == 13 && msg.startsWith("Hello"))
+        PORTB = 0x01;
+}
+```
+
+Ograniczenia:
+
+- `String` nie może być zwracany przez wartość — użyj parametru `String& out`
+- `s[i] = ...` jest zabronione (indeksowanie tylko do odczytu)
+- `+` nie można zagnieżdżać (`s = a + b + c`) — rozbij na osobne
+  przypisania; `s += 'x'` / `s += 5` nie są obsługiwane (literały znakowe
+  są składane do liczb przez parser)
+- `String s(...)` (konstruktor) nie jest obsługiwane — użyj `String s = "..."`
+- przekazanie `String` przez wartość robi płytką kopię struktury; w
+  parametrach używaj referencji `String&` / `const String&`
+
 ## Wymagania
 
 - CMake ≥ 3.16, kompilator C++20 (g++) i C (cc)
@@ -171,9 +207,9 @@ sdcc -mpic18 -p18f87k22 -I/usr/share/cppic/runtime \
 - [x] Emisja kodu C
 - [x] Name mangling, `this`/`self`, metody → funkcje, klasy → struktury
 - [x] `new`/`delete` → `cppic_malloc`/`cppic_free` (sterta w runtime)
+- [x] `String` (Arduino-style) na bazie runtime `CppicString`
 - [x] `const`/`volatile` w emitowanym C
 - [x] Runtime dla PIC18: host-sim (emulowane SFR-y, `setup()`/`loop()`)
 - [~] Backend SDCC → HEX: `scripts/build.sh --sdcc` + target CMake `hex-*`
       (wymaga lokalnie zainstalowanego `sdcc`)
 - [ ] Integracja z Arduino IDE
-- [ ] `String` i przyjazne typy (planowane na bazie sterty)

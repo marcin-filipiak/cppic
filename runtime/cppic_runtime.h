@@ -80,4 +80,41 @@ static inline void cppic_delay_cycles(uint16_t n) {
 void* cppic_malloc(unsigned int size);
 void cppic_free(void* p);
 
+/* ------------------------------------------------------------------- */
+/* String  (Arduino-style String lowered by the transpiler)             */
+/* ------------------------------------------------------------------- */
+/* data points to a NUL-terminated buffer (heap-owned when `own` is set,
+ * otherwise a static literal), len is the string length, cap the number
+ * of writable bytes before the terminating NUL.  An empty string has
+ * data == 0.  Strings own their heap buffer; mutation functions always
+ * copy the source - assigning from a String never aliases its data. */
+typedef struct CppicString {
+    char* data;
+    unsigned short len;
+    unsigned short cap;
+    unsigned char own;
+} CppicString;
+
+/* s = literal / s = src (deep copy) / d = a + b (alias-safe) */
+void cppic_string_set(CppicString* s, const char* lit);
+void cppic_string_copy(CppicString* d, const CppicString* src);
+void cppic_string_append(CppicString* d, const CppicString* src);
+void cppic_string_append_lit(CppicString* d, const char* lit);
+void cppic_string_append_char(CppicString* d, unsigned char c);
+void cppic_string_concat(CppicString* d, const CppicString* a, const CppicString* b);
+void cppic_string_concat_lit(CppicString* d, const CppicString* a, const char* lit);
+void cppic_string_concat_llit(CppicString* d, const char* lit, const CppicString* b);
+
+/* queries */
+unsigned short cppic_string_length(const CppicString* s);
+unsigned char cppic_string_char_at(const CppicString* s, unsigned short i);
+const char* cppic_string_c_str(const CppicString* s);
+unsigned char cppic_string_is_empty(const CppicString* s);
+signed char cppic_string_compare(const CppicString* a, const CppicString* b);
+signed char cppic_string_compare_lit(const CppicString* a, const char* b);
+signed short cppic_string_index_of(const CppicString* s, const char* needle);
+signed short cppic_string_index_of_char(const CppicString* s, unsigned char c);
+unsigned char cppic_string_starts_with(const CppicString* s, const char* pre);
+unsigned char cppic_string_ends_with(const CppicString* s, const char* suf);
+
 #endif /* CPPIC_RUNTIME_H */

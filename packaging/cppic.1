@@ -15,6 +15,10 @@ Input files are preprocessed (a C-preprocessor subset: #include, #define,
 #ifdef/#if/#elif/#else/#endif, #error) and linked into one translation
 unit, so sketches split across several files are supported.
 .PP
+The Arduino-style \fBString\fR type is supported (concatenation, append,
+comparison, length/charAt/c_str/isEmpty/indexOf/startsWith/endsWith and
+read-only indexing) through the CppicString runtime.
+.PP
 Modes:
 .TP
 .BR \-\-lex
@@ -57,8 +61,8 @@ Test the sketch on the desktop simulator:
 .SH FILES
 .TP
 .I /usr/share/cppic/runtime/cppic_runtime.h
-runtime header included by generated code (also provides the instant
-heaps implementing new/delete).
+runtime header included by generated code (also provides the small
+heaps implementing new/delete and the CppicString type).
 .TP
 .I /usr/share/cppic/runtime/cppic_runtime.c
 runtime implementation (heap + host simulator).

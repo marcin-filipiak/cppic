@@ -65,10 +65,16 @@ private:
     // --- type helpers ---
     std::string typeToC(const Type& t) const;
     bool isClassType(const TypePtr& t) const;
+    bool isStringType(const TypePtr& t) const;
     const ClassInfo* classOf(const TypePtr& t) const;
     const ClassInfo* classOfPointee(const TypePtr& t) const;
     TypePtr stripRef(const TypePtr& t) const;
     TypePtr derefType(const TypePtr& t) const;
+
+    // --- String lowering ---
+    std::string stringAssignCall(const std::string& dst, const Expr& rhs);
+    std::string stringAppendCall(const std::string& dst, const Expr& rhs);
+    std::string stringFunctionName(const std::string& member);
 
     // --- expression emission ---
     Val emitExpr(const Expr& e);

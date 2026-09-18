@@ -20,6 +20,7 @@
  */
 
 #include <stdint.h>
+#include "cppic_runtime.h"
 
 /* ------------------------------------------------------------------- */
 /* Heap                                                                 */
@@ -109,6 +110,241 @@ void cppic_free(void* p) {
         prev->size += sizeof *prev + b->size;
         prev->next = b->next;
     }
+}
+
+/* ------------------------------------------------------------------- */
+/* String                                                               */
+/* ------------------------------------------------------------------- */
+
+static unsigned short cppic_strlen(const char* s) {
+    unsigned short n = 0;
+    if (s) {
+        while (s[n]) ++n;
+    }
+    return n;
+}
+
+static void cppic_strset(char* d, const char* s, unsigned short n) {
+    unsigned short i;
+    for (i = 0; i < n; ++i) d[i] = s[i];
+    d[n] = 0;
+}
+
+static void cppic_string_release(CppicString* s) {
+    if (s && s->own) {
+        cppic_free(s->data);
+        s->data = 0;
+        s->own = 0;
+    }
+}
+
+/* Make sure `s` owns a buffer of at least `needed` writable bytes.
+ * Returns 0 when the heap is exhausted (s is left untouched). */
+static unsigned char cppic_string_reserve(CppicString* s, unsigned short needed) {
+    char* nb;
+    if (s->own && s->cap >= needed) return 1;
+    nb = (char*)cppic_malloc((unsigned int)needed + 1u);
+    if (!nb) return 0;
+    if (s->data && s->len) cppic_strset(nb, s->data, s->len);
+    nb[s->len] = 0;
+    cppic_string_release(s);
+    s->data = nb;
+    s->cap = needed;
+    s->own = 1;
+    return 1;
+}
+
+void cppic_string_set(CppicString* s, const char* lit) {
+    unsigned short n = cppic_strlen(lit);
+    if (!s) return;
+    if (n == 0) {
+        cppic_string_release(s);
+        s->len = 0;
+        return;
+    }
+    if (!cppic_string_reserve(s, n)) return;
+    cppic_strset(s->data, lit, n);
+    s->len = n;
+}
+
+void cppic_string_copy(CppicString* d, const CppicString* src) {
+    if (!d || !src) return;
+    if (d == src) return;
+    if (d->data == src->data && d->own == src->own) return;
+    if (src->len == 0) {
+        cppic_string_set(d, "");
+        return;
+    }
+    if (!cppic_string_reserve(d, src->len)) return;
+    cppic_strset(d->data, src->data, src->len);
+    d->len = src->len;
+}
+
+void cppic_string_append(CppicString* d, const CppicString* src) {
+    unsigned short sn, need, dn;
+    char* tmp;
+    if (!d || !src || src->len == 0) return;
+    sn = src->len;
+    dn = d->len;
+    need = (unsigned short)(dn + sn);
+    if (!(d->own && d->cap >= need)) {
+        /* guard against src aliasing d's buffer */
+        if (src->data >= d->data && src->data < d->data + dn) {
+            tmp = (char*)cppic_malloc((unsigned int)sn + 1u);
+            if (!tmp) return;
+            cppic_strset(tmp, src->data, sn);
+            cppic_string_reserve(d, need);
+            if (!(d->own && d->cap >= need)) { cppic_free(tmp); return; }
+        } else {
+            if (!cppic_string_reserve(d, need)) return;
+            tmp = 0;
+        }
+    } else {
+        tmp = 0;
+    }
+    cppic_strset(d->data + dn, tmp ? tmp : src->data, sn);
+    d->len = need;
+    if (tmp) cppic_free(tmp);
+}
+
+void cppic_string_append_lit(CppicString* d, const char* lit) {
+    unsigned short sn = cppic_strlen(lit);
+    unsigned short dn, need;
+    if (!d || sn == 0) return;
+    dn = d->len;
+    need = (unsigned short)(dn + sn);
+    if (!cppic_string_reserve(d, need)) return;
+    cppic_strset(d->data + dn, lit, sn);
+    d->len = need;
+}
+
+void cppic_string_append_char(CppicString* d, unsigned char c) {
+    unsigned short dn = d ? d->len : 0;
+    if (!d) return;
+    if (!cppic_string_reserve(d, (unsigned short)(dn + 1u))) return;
+    d->data[dn] = (char)c;
+    d->data[dn + 1u] = 0;
+    d->len = (unsigned short)(dn + 1u);
+}
+
+static void cppic_string_concat_buf(CppicString* d,
+                                    const char* a, unsigned short an,
+                                    const char* b, unsigned short bn) {
+    char* nb;
+    unsigned short len = (unsigned short)(an + bn);
+    if (!d) return;
+    nb = (char*)cppic_malloc((unsigned int)len + 1u);
+    if (!nb) return;
+    if (an) cppic_strset(nb, a, an);
+    if (bn) cppic_strset(nb + an, b, bn);
+    nb[len] = 0;
+    cppic_string_release(d);
+    d->data = nb;
+    d->len = len;
+    d->cap = len;
+    d->own = 1;
+}
+
+void cppic_string_concat(CppicString* d, const CppicString* a, const CppicString* b) {
+    if (!d || !a || !b) return;
+    cppic_string_concat_buf(d, a->data, a->len, b->data, b->len);
+}
+
+void cppic_string_concat_lit(CppicString* d, const CppicString* a, const char* lit) {
+    if (!d || !a) return;
+    cppic_string_concat_buf(d, a->data, a->len, lit, cppic_strlen(lit));
+}
+
+void cppic_string_concat_llit(CppicString* d, const char* lit, const CppicString* b) {
+    if (!d || !b) return;
+    cppic_string_concat_buf(d, lit, cppic_strlen(lit), b->data, b->len);
+}
+
+unsigned short cppic_string_length(const CppicString* s) {
+    return s ? s->len : 0;
+}
+
+unsigned char cppic_string_char_at(const CppicString* s, unsigned short i) {
+    return (s && s->data && i < s->len) ? (unsigned char)s->data[i] : 0;
+}
+
+const char* cppic_string_c_str(const CppicString* s) {
+    return (s && s->data) ? s->data : "";
+}
+
+unsigned char cppic_string_is_empty(const CppicString* s) {
+    return (!s || s->len == 0) ? 1 : 0;
+}
+
+signed char cppic_string_compare(const CppicString* a, const CppicString* b) {
+    const char* pa = a ? a->data : "";
+    const char* pb = b ? b->data : "";
+    unsigned short i = 0;
+    for (;;) {
+        unsigned char ca = (unsigned char)pa[i];
+        unsigned char cb = (unsigned char)pb[i];
+        if (ca != cb) return (signed char)(ca < cb ? -1 : 1);
+        if (ca == 0) return 0;
+        ++i;
+    }
+}
+
+signed char cppic_string_compare_lit(const CppicString* a, const char* b) {
+    const char* pa = a ? a->data : "";
+    const char* pb = b ? b : "";
+    unsigned short i = 0;
+    for (;;) {
+        unsigned char ca = (unsigned char)pa[i];
+        unsigned char cb = (unsigned char)pb[i];
+        if (ca != cb) return (signed char)(ca < cb ? -1 : 1);
+        if (ca == 0) return 0;
+        ++i;
+    }
+}
+
+signed short cppic_string_index_of(const CppicString* s, const char* needle) {
+    unsigned short sn = cppic_strlen(needle);
+    unsigned short i, j;
+    if (!s || sn == 0 || s->len < sn) return -1;
+    if (sn == 1) return (signed short)cppic_string_index_of_char(s, (unsigned char)needle[0]);
+    for (i = 0; i + sn <= s->len; ++i) {
+        for (j = 0; j < sn; ++j) {
+            if (s->data[i + j] != needle[j]) break;
+        }
+        if (j == sn) return (signed short)i;
+    }
+    return -1;
+}
+
+signed short cppic_string_index_of_char(const CppicString* s, unsigned char c) {
+    unsigned short i;
+    if (!s || !s->data) return -1;
+    for (i = 0; i < s->len; ++i) {
+        if ((unsigned char)s->data[i] == c) return (signed short)i;
+    }
+    return -1;
+}
+
+unsigned char cppic_string_starts_with(const CppicString* s, const char* pre) {
+    unsigned short i = 0;
+    if (!pre || !pre[0]) return 1;
+    if (!s || !s->data) return 0;
+    while (pre[i]) {
+        if (i >= s->len || s->data[i] != pre[i]) return 0;
+        ++i;
+    }
+    return 1;
+}
+
+unsigned char cppic_string_ends_with(const CppicString* s, const char* suf) {
+    unsigned short sn, i;
+    if (!suf || !suf[0]) return 1;
+    sn = cppic_strlen(suf);
+    if (!s || !s->data || s->len < sn) return 0;
+    for (i = 0; i < sn; ++i) {
+        if (s->data[s->len - sn + i] != suf[i]) return 0;
+    }
+    return 1;
 }
 
 /* ------------------------------------------------------------------- */

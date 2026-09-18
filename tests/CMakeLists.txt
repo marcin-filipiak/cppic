@@ -70,6 +70,29 @@ add_dependencies(multi_hostsim cppic)
 add_test(NAME hostsim_multi COMMAND multi_hostsim)
 
 # ---------------------------------------------------------------------------
+# End-to-end host-sim test (Arduino-style String).
+# ---------------------------------------------------------------------------
+set(CPPIC_STRING_C ${CPPIC_HOSTSIM_DIR}/string.c)
+add_custom_command(
+  OUTPUT ${CPPIC_STRING_C}
+  COMMAND $<TARGET_FILE:cppic>
+          --emit ${CMAKE_CURRENT_SOURCE_DIR}/samples/string.cpp
+          > ${CPPIC_STRING_C}
+  DEPENDS cppic ${CMAKE_CURRENT_SOURCE_DIR}/samples/string.cpp
+  COMMENT "cppic --emit samples/string.cpp (host-sim String test)"
+  VERBATIM
+)
+
+add_executable(string_hostsim
+  ${CPPIC_STRING_C}
+  ${CMAKE_SOURCE_DIR}/runtime/cppic_runtime.c
+)
+target_compile_definitions(string_hostsim PRIVATE CPPIC_HOST_SIM)
+target_include_directories(string_hostsim PRIVATE ${CMAKE_SOURCE_DIR}/runtime)
+add_dependencies(string_hostsim cppic)
+add_test(NAME hostsim_string COMMAND string_hostsim)
+
+# ---------------------------------------------------------------------------
 # SDCC backend: blink.hex for a PIC18 (only when sdcc is installed).
 #   cmake --build build --target hex-blink
 # ---------------------------------------------------------------------------

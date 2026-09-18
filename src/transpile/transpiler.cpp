@@ -163,8 +163,10 @@ std::string Transpiler::typeToC(const Type& t) const {
             const auto& a = std::get<Type::ArrayData>(t.data);
             return typeToC(*a.element);
         }
-        case Type::Kind::Named:
-            return classCName(std::get<Type::NamedData>(t.data).name);
+        case Type::Kind::Named: {
+            const std::string& n = std::get<Type::NamedData>(t.data).name;
+            return n == "String" ? "CppicString" : classCName(n);
+        }
         case Type::Kind::Function:
             return "void*";
     }
@@ -174,6 +176,11 @@ std::string Transpiler::typeToC(const Type& t) const {
 bool Transpiler::isClassType(const TypePtr& t) const {
     if (!t || t->kind != Type::Kind::Named) return false;
     return classes_.count(std::get<Type::NamedData>(t->data).name) > 0;
+}
+
+bool Transpiler::isStringType(const TypePtr& t) const {
+    return t && t->kind == Type::Kind::Named &&
+           std::get<Type::NamedData>(t->data).name == "String";
 }
 
 const Transpiler::ClassInfo* Transpiler::classOf(const TypePtr& t) const {
@@ -204,6 +211,67 @@ TypePtr Transpiler::derefType(const TypePtr& t) const {
     if (t->kind == Type::Kind::Reference)
         return std::get<Type::ReferenceData>(t->data).referent;
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// String lowering
+// ---------------------------------------------------------------------------
+
+// Emits C for `dst = rhs` where dst is "&s" (or a String pointer) and rhs is
+// an expression assignable to an Arduino-style String.
+std::string Transpiler::stringAssignCall(const std::string& dst, const Expr& rhs) {
+    if (rhs.kind == Expr::Kind::StrLit)
+        return "cppic_string_set(" + dst + ", \"" + escapeCString(rhs.stringValue) + "\")";
+    if (rhs.kind == Expr::Kind::Binary && rhs.binOp == BinOp::Add) {
+        Val lv = emitExpr(*rhs.lhs);
+        Val rv = emitExpr(*rhs.rhs);
+        bool lS = isStringType(stripRef(lv.type));
+        bool rS = isStringType(stripRef(rv.type));
+        std::string ar = lv.ptr ? lv.code : "&" + lv.code;
+        std::string br = rv.ptr ? rv.code : "&" + rv.code;
+        if (lS && rS)
+            return "cppic_string_concat(" + dst + ", " + ar + ", " + br + ")";
+        if (lS && !rS)
+            return "cppic_string_concat_lit(" + dst + ", " + ar + ", " + rv.code + ")";
+        if (!lS && rS)
+            return "cppic_string_concat_llit(" + dst + ", " + lv.code + ", " + br + ")";
+        err("unsupported String concatenation operands", rhs.loc);
+    }
+    Val v = emitExpr(rhs);
+    if (isStringType(stripRef(v.type))) {
+        std::string src = v.ptr ? v.code : "&" + v.code;
+        return "cppic_string_copy(" + dst + ", " + src + ")";
+    }
+    err("cannot assign this expression to String", rhs.loc);
+}
+
+// Emits C for `dst += rhs`.
+std::string Transpiler::stringAppendCall(const std::string& dst, const Expr& rhs) {
+    if (rhs.kind == Expr::Kind::StrLit)
+        return "cppic_string_append_lit(" + dst + ", \"" +
+               escapeCString(rhs.stringValue) + "\")";
+    Val v = emitExpr(rhs);
+    if (isStringType(stripRef(v.type))) {
+        std::string src = v.ptr ? v.code : "&" + v.code;
+        return "cppic_string_append(" + dst + ", " + src + ")";
+    }
+    err("unsupported String += operand (append String value, literals or "
+        "split concatenations into statements)",
+        rhs.loc);
+}
+
+std::string Transpiler::stringFunctionName(const std::string& member) {
+    static const std::unordered_map<std::string, std::string> m = {
+        {"length", "cppic_string_length"},
+        {"charAt", "cppic_string_char_at"},
+        {"c_str", "cppic_string_c_str"},
+        {"isEmpty", "cppic_string_is_empty"},
+        {"startsWith", "cppic_string_starts_with"},
+        {"endsWith", "cppic_string_ends_with"},
+        {"indexOf", "cppic_string_index_of_char"},
+    };
+    auto it = m.find(member);
+    return it == m.end() ? "" : it->second;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +432,22 @@ Transpiler::Val Transpiler::emitExpr(const Expr& e) {
         case Expr::Kind::Unary: return emitUnary(e);
         case Expr::Kind::Binary: return emitBinary(e);
         case Expr::Kind::Assign: {
+            // String[index] = ... is read-only
+            if (e.lhs && e.lhs->kind == Expr::Kind::Index && e.lhs->object) {
+                Val obj = emitExpr(*e.lhs->object);
+                if (isStringType(stripRef(obj.type)))
+                    err("String elements are read-only (use charAt)", e.loc);
+            }
             Val lhs = emitExpr(*e.lhs);
+            // String assignment / compound assignment
+            if (isStringType(stripRef(lhs.type))) {
+                std::string dst = lhs.ptr ? lhs.code : "&" + lhs.code;
+                if (e.assignOp == AssignOp::Assign)
+                    return {stringAssignCall(dst, *e.rhs), lhs.type, false};
+                if (e.assignOp == AssignOp::Add)
+                    return {stringAppendCall(dst, *e.rhs), lhs.type, false};
+                err("String does not support this compound assignment", e.loc);
+            }
             Val rhs = emitExpr(*e.rhs);
             std::string op = "=";
             switch (e.assignOp) {
@@ -430,6 +513,11 @@ Transpiler::Val Transpiler::emitExpr(const Expr& e) {
         case Expr::Kind::Index: {
             Val o = emitExpr(*e.object);
             Val i = emitExpr(*e.operand);
+            if (isStringType(stripRef(o.type))) {
+                std::string r = o.ptr ? o.code : "&" + o.code;
+                return {"cppic_string_char_at(" + r + ", " + i.code + ")",
+                        Type::builtin(Type::Bases_Char), false};
+            }
             const ClassInfo* ci = classOfPointee(o.type);
             if (ci) {
                 auto mit = ci->methods.find("operator[]");
@@ -487,6 +575,12 @@ std::string Transpiler::newSizeExpr(const Expr& ne) {
 
 std::string Transpiler::newCtorCall(const Expr& ne, const std::string& ptrCode) {
     if (ne.isArrayNew) return "";
+    if (isStringType(ne.type)) {
+        if (!ne.args.empty() && ne.args[0]->kind == Expr::Kind::StrLit)
+            return "cppic_string_set(" + ptrCode + ", \"" +
+                   escapeCString(ne.args[0]->stringValue) + "\");";
+        return "";
+    }
     const ClassInfo* ci = classOf(ne.type);
     if (!ci || ci->ctorOverloads.empty()) return "";
     const FunctionDecl* ctor = ci->ctorOverloads.front();
@@ -561,6 +655,45 @@ Transpiler::Val Transpiler::emitBinary(const Expr& e) {
     Val a = emitExpr(*e.lhs);
     Val b = emitExpr(*e.rhs);
     std::string sym = binSym(e.binOp);
+
+    // String concatenation / comparisons
+    {
+        bool aStr = isStringType(stripRef(a.type));
+        bool bStr = isStringType(stripRef(b.type));
+        if (e.binOp == BinOp::Add && (aStr || bStr))
+            err("String '+' is only supported in assignments, initializers and "
+                "return statements",
+                e.loc);
+        if (e.binOp == BinOp::Eq || e.binOp == BinOp::Ne ||
+            e.binOp == BinOp::Lt || e.binOp == BinOp::Le ||
+            e.binOp == BinOp::Gt || e.binOp == BinOp::Ge) {
+            if (aStr || bStr) {
+                std::string ar = a.ptr ? a.code : "&" + a.code;
+                std::string br = b.ptr ? b.code : "&" + b.code;
+                std::string cmp;
+                std::string rel;
+                if (aStr) {
+                    cmp = bStr ? "cppic_string_compare(" + ar + ", " + br + ")"
+                               : "cppic_string_compare_lit(" + ar + ", " + b.code + ")";
+                    rel = sym;
+                } else {
+                    // "lit" < s  <=>  compare(b, lit) > 0 (keep literal on the left)
+                    cmp = "cppic_string_compare_lit(" + br + ", " + a.code + ")";
+                    switch (e.binOp) {
+                        case BinOp::Eq: rel = "=="; break;
+                        case BinOp::Ne: rel = "!="; break;
+                        case BinOp::Lt: rel = ">"; break;
+                        case BinOp::Le: rel = ">="; break;
+                        case BinOp::Gt: rel = "<"; break;
+                        case BinOp::Ge: rel = "<="; break;
+                        default: rel = "=="; break;
+                    }
+                }
+                return {"(" + cmp + " " + rel + " 0)",
+                        Type::builtin(Type::Bases_Bool), false};
+            }
+        }
+    }
 
     // class operator overload
     const ClassInfo* ci = classOf(stripRef(a.type));
@@ -639,6 +772,37 @@ Transpiler::Val Transpiler::emitCall(const Expr& e) {
     if (callee->kind == Expr::Kind::Member) {
         const std::string& member = callee->member;
         Val recv = emitExpr(*callee->object);
+
+        // String method call: length / charAt / c_str / isEmpty / indexOf /
+        // startsWith / endsWith
+        if (isStringType(stripRef(recv.type))) {
+            std::string r = recv.ptr ? recv.code : "&" + recv.code;
+            const std::string& fn = stringFunctionName(member);
+            if (fn.empty())
+                err("String has no method '" + member + "'", e.loc);
+            if (member == "indexOf" && !e.args.empty() &&
+                e.args[0]->kind == Expr::Kind::StrLit)
+                return {"cppic_string_index_of(" + r + ", " +
+                            emitExpr(*e.args[0]).code + ")",
+                        Type::builtin(Type::Bases_Int), false};
+            std::string args = emitArgsAsValues(e.args, nullptr, "");
+            TypePtr ret = Type::builtin(Type::Bases_Int);
+            bool ptr = false;
+            const std::string& member2 = member;
+            if (member2 == "charAt") ret = Type::builtin(Type::Bases_Char);
+            else if (member2 == "isEmpty" || member2 == "startsWith" ||
+                     member2 == "endsWith")
+                ret = Type::builtin(Type::Bases_Bool);
+            else if (member2 == "c_str") {
+                ret = Type::pointer(Type::builtin(Type::Bases_Char));
+                ptr = true;
+            }
+            std::string call = fn + "(" + r;
+            if (!args.empty()) call += ", " + args;
+            call += ")";
+            return {call, ret, ptr};
+        }
+
         const ClassInfo* ci = classOfPointee(recv.type);
 
         // static: Class::method(...)
@@ -836,6 +1000,15 @@ void Transpiler::emitBlock(const Stmt& s, int indent) {
 void Transpiler::emitDeclaration(const VarDecl& v, int indent) {
     std::string pad = indentStr(indent);
 
+    // Arduino-style String local
+    if (isStringType(v.type)) {
+        out_ << pad << "CppicString " << v.name << " = {0, 0, 0, 0};\n";
+        declareVar(v.name, v.type);
+        if (v.init && v.init->kind != Expr::Kind::NewExpr)
+            out_ << pad << stringAssignCall("&" + v.name, *v.init) << ";\n";
+        return;
+    }
+
     // heap-allocated pointer:  T* p = new T(args) / new T[n]
     if (v.init && v.init->kind == Expr::Kind::NewExpr) {
         emitNewInit(v, *v.init, indent);
@@ -927,6 +1100,10 @@ void Transpiler::emitPrototype(const FunctionDecl& f, const ClassInfo* ci) {
 
 void Transpiler::emitFunction(const FunctionDecl& f, const ClassInfo* ci) {
     TypePtr ret = f.returns;
+    if (isStringType(ret))
+        err("String cannot be returned by value; pass a String& out parameter "
+            "instead",
+            f.loc);
     std::string retType = f.isConstructor || f.isDestructor ? "void" : typeToC(*ret);
     out_ << retType << " " << mangleFunction(f, ci) << "(";
     bool needComma = false;
@@ -965,6 +1142,17 @@ void Transpiler::emitClassStruct(const ClassInfo& ci) {
 }
 
 void Transpiler::emitGlobalVar(const VarDecl& v) {
+    if (isStringType(v.type)) {
+        if (v.init && v.init->kind == Expr::Kind::StrLit) {
+            const std::string& lit = v.init->stringValue;
+            out_ << "CppicString " << v.name << " = {(char*)\""
+                 << escapeCString(lit) << "\", " << static_cast<unsigned short>(lit.size())
+                 << ", " << static_cast<unsigned short>(lit.size()) << ", 0};\n";
+        } else {
+            out_ << "CppicString " << v.name << " = {0, 0, 0, 0};\n";
+        }
+        return;
+    }
     out_ << typeToC(*v.type) << " " << v.name;
     if (v.init) out_ << " = " << emitExpr(*v.init).code;
     out_ << ";\n";

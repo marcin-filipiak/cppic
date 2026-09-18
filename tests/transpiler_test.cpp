@@ -86,5 +86,89 @@ int main(int argc, char** argv) {
         }
     }
     std::fprintf(stderr, "transpile_test: new/delete lowering OK\n");
+
+    // String lowering: zero-init locals, deep copy, concat/append, compare,
+    // methods and indexing.
+    const char* ssrc =
+        "String g = \"Hello\";\n"
+        "String other;\n"
+        "void setup() {\n"
+        "    String s = \"world\";\n"
+        "    other = g + \", world\";\n"
+        "    other += \"!\";\n"
+        "    s = other;\n"
+        "    unsigned char ok = (s == other) && (s != g) && (g < s);\n"
+        "    ok = ok && (s.length() == 13) && (s.charAt(0) == 'o');\n"
+        "    PORTB = ok;\n"
+        "}\n";
+
+    cppic::Lexer lexer3(ssrc);
+    auto tokens3 = lexer3.tokenize();
+    cppic::Parser parser3(std::move(tokens3));
+    cppic::TranslationUnit tu3 = parser3.parseTranslationUnit();
+    cppic::Transpiler t3;
+    std::string c3 = t3.run(tu3);
+
+    const char* str_expects[] = {
+        "CppicString g = {(char*)\"Hello\", 5, 5, 0};",
+        "CppicString other = {0, 0, 0, 0};",
+        "CppicString s = {0, 0, 0, 0};",
+        "cppic_string_set(&s, \"world\")",
+        "cppic_string_concat_lit(&other, &g, \", world\")",
+        "cppic_string_append_lit(&other, \"!\")",
+        "cppic_string_copy(&s, &other)",
+        "cppic_string_compare(&s, &other)",
+        "cppic_string_compare(&g, &s)",
+        "cppic_string_length(&s)",
+        "cppic_string_char_at(&s, 0)",
+    };
+    for (const char* e : str_expects) {
+        if (c3.find(e) == std::string::npos) {
+            std::fprintf(stderr, "transpile_test(String): missing: %s\n", e);
+            return 1;
+        }
+    }
+
+    // String returned by value must be a clean transpiler error.
+    {
+        const char* bad = "String f() { return \"x\"; }\n";
+        cppic::Lexer lx(bad);
+        auto tk = lx.tokenize();
+        cppic::Parser p(std::move(tk));
+        cppic::TranslationUnit tu = p.parseTranslationUnit();
+        cppic::Transpiler t;
+        bool threw = false;
+        try {
+            t.run(tu);
+        } catch (const cppic::TranspileError&) {
+            threw = true;
+        }
+        if (!threw) {
+            std::fprintf(stderr, "transpile_test(String): return-by-value not rejected\n");
+            return 1;
+        }
+    }
+
+    // Writing through String::operator[] must be rejected (read-only).
+    {
+        const char* bad = "void setup() { String s = \"x\"; s[0] = 'y'; }\n";
+        cppic::Lexer lx(bad);
+        auto tk = lx.tokenize();
+        cppic::Parser p(std::move(tk));
+        cppic::TranslationUnit tu = p.parseTranslationUnit();
+        cppic::Transpiler t;
+        bool threw = false;
+        try {
+            t.run(tu);
+        } catch (const cppic::TranspileError&) {
+            threw = true;
+        }
+        if (!threw) {
+            std::fprintf(stderr, "transpile_test(String): writable index not rejected\n");
+            return 1;
+        }
+    }
+
+    std::fprintf(stderr, "transpile_test: String lowering OK\n");
     return 0;
 }

@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.d
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Compiler output
+*.hex
+*.asm
+*.lst
+*.map
+*.rel
+*.adb
+*.cdb

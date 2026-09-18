@@ -3,6 +3,7 @@
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
 #include "parser/parser.hpp"
+#include "transpile/transpiler.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -23,27 +24,29 @@ std::string readFile(const char* path) {
     return ss.str();
 }
 
-enum class Mode { Lex, Dump };
+enum class Mode { Lex, Dump, Emit }; // Emit = transpile to C
 
 int usage() {
     std::fprintf(stderr,
                  "cppic - C++ -> C transpiler for PIC18 (work in progress)\n\n"
-                 "usage: cppic [--lex|--dump] <file.cpp>\n"
-                 "  (default: full pipeline; currently prints tokens unless a\n"
-                 "   mode is selected)\n");
+                 "usage: cppic [--lex|--dump|--emit] <file.cpp>\n"
+                 "  --lex   print tokens\n"
+                 "  --dump  print parsed AST\n"
+                 "  --emit  transpile to C (default for .cpp with setup/loop)\n");
     return 2;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    Mode mode = Mode::Lex;
+    Mode mode = Mode::Dump;
     const char* file = nullptr;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--lex") mode = Mode::Lex;
         else if (a == "--dump") mode = Mode::Dump;
+        else if (a == "--emit") mode = Mode::Emit;
         else if (a == "-h" || a == "--help") return usage();
         else file = argv[i];
     }
@@ -69,8 +72,15 @@ int main(int argc, char** argv) {
 
         cppic::Parser parser(std::move(tokens));
         cppic::TranslationUnit tu = parser.parseTranslationUnit();
-        std::printf("// %s\n", file);
-        for (const auto& d : tu.decls) std::printf("%s", cppic::dumpDecl(*d).c_str());
+        if (mode == Mode::Dump) {
+            std::printf("// %s\n", file);
+            for (const auto& d : tu.decls) std::printf("%s", cppic::dumpDecl(*d).c_str());
+            return 0;
+        }
+
+        cppic::Transpiler transpiler;
+        std::string c = transpiler.run(tu);
+        std::fputs(c.c_str(), stdout);
         return 0;
     } catch (const cppic::LexError& e) {
         std::fprintf(stderr, "lex error: %d:%d: %s\n", e.loc.line, e.loc.col,

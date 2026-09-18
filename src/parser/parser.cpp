@@ -218,15 +218,28 @@ DeclPtr Parser::parseStructOrClass(TT keywordTok) {
         while (match(TT::ColonColon)) className += "::" + expectIdent().text;
     }
 
+    // base classes: [virtual] [access] Name, ...
+    std::vector<std::string> baseNames;
     if (match(TT::Colon)) {
-        int depth = 0;
-        while (!at(TT::End)) {
-            TT k = peek().kind;
-            if (k == TT::Less) ++depth;
-            if (k == TT::Greater) --depth;
-            if (k == TT::Lbrace && depth <= 0) break;
-            if (k == TT::Semicolon && depth <= 0) break;
+        while (peek().kind == TT::KwVirtual) ++pos_;
+        if (peek().kind == TT::KwPublic || peek().kind == TT::KwPrivate ||
+            peek().kind == TT::KwProtected)
             ++pos_;
+        if (peek().kind == TT::Identifier || peek().kind == TT::ColonColon) {
+            std::string b = expectIdent().text;
+            while (match(TT::ColonColon)) b += "::" + expectIdent().text;
+            baseNames.push_back(b);
+        }
+        while (match(TT::Comma)) {
+            while (peek().kind == TT::KwVirtual) ++pos_;
+            if (peek().kind == TT::KwPublic || peek().kind == TT::KwPrivate ||
+                peek().kind == TT::KwProtected)
+                ++pos_;
+            if (peek().kind == TT::Identifier || peek().kind == TT::ColonColon) {
+                std::string b = expectIdent().text;
+                while (match(TT::ColonColon)) b += "::" + expectIdent().text;
+                baseNames.push_back(b);
+            }
         }
     }
 
@@ -251,6 +264,7 @@ DeclPtr Parser::parseStructOrClass(TT keywordTok) {
     d->klass->isStruct = isStruct;
     d->klass->isUnion = isUnion;
     d->klass->members = std::move(members);
+    d->klass->bases = std::move(baseNames);
     return d;
 }
 

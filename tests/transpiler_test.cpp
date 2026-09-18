@@ -48,6 +48,43 @@ int readSample(const char* kcollection) {
 }
 
 int main(int argc, char** argv) {
-    return readSample(argc > 1 ? argv[1] :
+    int rc = readSample(argc > 1 ? argv[1] :
         "/home/kolgreen/playground/cppic/tests/samples/blink.cpp");
+    if (rc) return rc;
+
+    // new/delete lowering: malloc + ctor call, dtor + free.
+    const char* src =
+        "class Led {\n"
+        "public:\n"
+        "    Led(unsigned char p) { this->pin = p; }\n"
+        "    ~Led() { this->pin = 0; }\n"
+        "private:\n"
+        "    unsigned char pin;\n"
+        "};\n"
+        "Led* led;\n"
+        "int* arr;\n"
+        "void setup() { led = new Led(1); arr = new int[4]; }\n"
+        "void loop() { delete[] arr; delete led; }\n";
+
+    cppic::Lexer lexer2(src);
+    auto tokens2 = lexer2.tokenize();
+    cppic::Parser parser2(std::move(tokens2));
+    cppic::TranslationUnit tu2 = parser2.parseTranslationUnit();
+    cppic::Transpiler t2;
+    std::string c2 = t2.run(tu2);
+
+    const char* nd_expects[] = {
+        "cppic_malloc",
+        "cppic_free",
+        "Led__ctor(led, 1)",
+        "Led__dtor(led)",
+    };
+    for (const char* e : nd_expects) {
+        if (c2.find(e) == std::string::npos) {
+            std::fprintf(stderr, "transpile_test(new/delete): missing: %s\n", e);
+            return 1;
+        }
+    }
+    std::fprintf(stderr, "transpile_test: new/delete lowering OK\n");
+    return 0;
 }

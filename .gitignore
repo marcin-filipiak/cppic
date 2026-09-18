@@ -20,3 +20,7 @@ cmake-build-*/
 *.rel
 *.adb
 *.cdb
+
+# scripts/build.sh artifacts
+/*_host
+/*.c

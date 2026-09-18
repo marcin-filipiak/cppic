@@ -8,14 +8,16 @@ private:
     unsigned char pin;
 };
 
+Led led;
+
 void setup() {
     TRISB = 0x00;
-    Led led;
     led.init(1);
-    while (true) {
-        led.on();
-        for (volatile int i = 0; i < 100000; i++);
-        led.off();
-        for (volatile int i = 0; i < 100000; i++);
-    }
+}
+
+void loop() {
+    led.off();
+    for (volatile int i = 0; i < 100000; i++);
+    led.on();
+    for (volatile int i = 0; i < 100000; i++);
 }

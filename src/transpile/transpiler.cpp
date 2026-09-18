@@ -130,10 +130,13 @@ std::string Transpiler::typeToC(const Type& t) const {
     switch (t.kind) {
         case Type::Kind::Builtin: {
             const auto& b = std::get<Type::BuiltinData>(t.data);
-            if (b.base == Type::Bases_Void) return "void";
-            if (b.base == Type::Bases_Bool) return "unsigned char";
-            if (b.base == Type::Bases_Float) return "float";
-            if (b.base == Type::Bases_Double) return "float";  // PIC18 has no double
+            std::string q;
+            if (b.isConst) q += " const";
+            if (b.isVolatile) q += " volatile";
+            if (b.base == Type::Bases_Void) return "void" + q;
+            if (b.base == Type::Bases_Bool) return "unsigned char" + q;
+            if (b.base == Type::Bases_Float) return "float" + q;
+            if (b.base == Type::Bases_Double) return "float" + q;  // PIC18 has no double
             std::string s;
             if (b.isUnsigned) s += "unsigned ";
             if (b.base == Type::Bases_Char) {
@@ -145,10 +148,12 @@ std::string Transpiler::typeToC(const Type& t) const {
             } else {
                 s += "int";
             }
-            return s;
+            return s + q;
         }
-        case Type::Kind::Pointer:
-            return typeToC(*std::get<Type::PointerData>(t.data).pointee) + "*";
+        case Type::Kind::Pointer: {
+            const auto& pd = std::get<Type::PointerData>(t.data);
+            return typeToC(*pd.pointee) + "*" + (pd.isConst ? " const" : "");
+        }
         case Type::Kind::Reference:
             return typeToC(*std::get<Type::ReferenceData>(t.data).referent) + "*";
         case Type::Kind::Array: {
@@ -172,6 +177,15 @@ const Transpiler::ClassInfo* Transpiler::classOf(const TypePtr& t) const {
     if (!isClassType(t)) return nullptr;
     auto it = classes_.find(std::get<Type::NamedData>(t->data).name);
     return it == classes_.end() ? nullptr : &it->second;
+}
+
+const Transpiler::ClassInfo* Transpiler::classOfPointee(const TypePtr& t) const {
+    TypePtr d = stripRef(t);
+    if (d && d->kind == Type::Kind::Pointer)
+        d = std::get<Type::PointerData>(d->data).pointee;
+    if (d && d->kind == Type::Kind::Reference)
+        d = std::get<Type::ReferenceData>(d->data).referent;
+    return classOf(d);
 }
 
 TypePtr Transpiler::stripRef(const TypePtr& t) const {
@@ -322,6 +336,16 @@ Transpiler::Val Transpiler::emitExpr(const Expr& e) {
             TypePtr local = lookupVar(e.name);
             if (local)
                 return {e.name, local, isPointerLike(local)};
+            if (currentClass_) {
+                auto f = currentClass_->fieldByName.find(e.name);
+                if (f != currentClass_->fieldByName.end())
+                    return {"self->" + e.name, f->second->type,
+                            isPointerLike(f->second->type)};
+                for (auto* sf : currentClass_->staticFields)
+                    if (sf->name == e.name)
+                        return {currentClass_->cname + "__" + e.name, sf->type,
+                                isPointerLike(sf->type)};
+            }
             auto g = globals_.find(e.name);
             if (g != globals_.end()) {
                 TypePtr t = g->second->type;
@@ -403,7 +427,7 @@ Transpiler::Val Transpiler::emitExpr(const Expr& e) {
         case Expr::Kind::Index: {
             Val o = emitExpr(*e.object);
             Val i = emitExpr(*e.operand);
-            const ClassInfo* ci = classOf(stripRef(o.type));
+            const ClassInfo* ci = classOfPointee(o.type);
             if (ci) {
                 auto mit = ci->methods.find("operator[]");
                 if (mit != ci->methods.end() && !mit->second.empty()) {
@@ -436,11 +460,68 @@ Transpiler::Val Transpiler::emitExpr(const Expr& e) {
             return {"sizeof(" + v.code + ")", Type::builtin(Type::Bases_Int), false};
         }
         case Expr::Kind::NewExpr:
-            err("dynamic allocation (new) is not supported on PIC18 yet", e.loc);
-        case Expr::Kind::DeleteExpr:
-            err("dynamic allocation (delete) is not supported on PIC18 yet", e.loc);
+            // Standalone new inside of a larger expression: allocate and mock.
+            // Declarations / assignments / delete are lowered to call the ctor
+            // (or dtor) via emitDeclaration / emitStmt.
+            return {"cppic_malloc(" + newSizeExpr(e) + ")",
+                    Type::pointer(e.type), true};
+        case Expr::Kind::DeleteExpr: {
+            Val v = emitExpr(*e.operand);
+            return {"cppic_free(" + v.code + ")", Type::builtin(Type::Bases_Void), false};
+        }
     }
     return {"0", nullptr, false};
+}
+
+std::string Transpiler::newSizeExpr(const Expr& ne) {
+    std::string base = "sizeof(" + typeToC(*ne.type) + ")";
+    if (ne.isArrayNew) {
+        std::string cnt = ne.newCount ? emitExpr(*ne.newCount).code : "1";
+        base = base + " * " + cnt;
+    }
+    return "((unsigned int)(" + base + "))";
+}
+
+std::string Transpiler::newCtorCall(const Expr& ne, const std::string& ptrCode) {
+    if (ne.isArrayNew) return "";
+    const ClassInfo* ci = classOf(ne.type);
+    if (!ci || ci->ctorOverloads.empty()) return "";
+    const FunctionDecl* ctor = ci->ctorOverloads.front();
+    std::string args = emitArgsAsValues(ne.args, &ctor->params, "");
+    std::string call = mangleFunction(*ctor, ci) + "(" + ptrCode;
+    if (!args.empty()) call += ", " + args;
+    return call + ");";
+}
+
+void Transpiler::emitNewInit(const VarDecl& v, const Expr& ne, int indent) {
+    std::string pad = indentStr(indent);
+    out_ << pad << typeToC(*v.type) << " " << v.name
+         << " = cppic_malloc(" << newSizeExpr(ne) << ");\n";
+    std::string ctor = newCtorCall(ne, v.name);
+    if (!ctor.empty()) out_ << pad << ctor << "\n";
+    declareVar(v.name, v.type);
+}
+
+void Transpiler::emitNewAssignment(const Expr& as, int indent) {
+    std::string pad = indentStr(indent);
+    Val lhs = emitExpr(*as.lhs);
+    const Expr& ne = *as.rhs;
+    out_ << pad << "((" << lhs.code << ") = cppic_malloc(" << newSizeExpr(ne)
+         << "));\n";
+    std::string ctor = newCtorCall(ne, lhs.code);
+    if (!ctor.empty()) out_ << pad << ctor << "\n";
+}
+
+void Transpiler::emitDeleteStatement(const Expr& de, int indent) {
+    std::string pad = indentStr(indent);
+    Val v = emitExpr(*de.operand);
+    TypePtr et = v.type;
+    if (et && et->kind == Type::Kind::Pointer)
+        et = std::get<Type::PointerData>(et->data).pointee;
+    const ClassInfo* dci = classOf(et);
+    if (dci && dci->dtor && dci->dtor->body && !de.isArrayDelete)
+        out_ << pad << dci->cname << "__dtor(" << v.code << ");\n";
+    out_ << pad << "cppic_free(" << v.code << ");\n";
 }
 
 Transpiler::Val Transpiler::emitUnary(const Expr& e) {
@@ -514,7 +595,7 @@ Transpiler::Val Transpiler::emitBinary(const Expr& e) {
 Transpiler::Val Transpiler::emitMember(const Expr& e, bool wantCall) {
     (void)wantCall;
     Val o = emitExpr(*e.object);
-    const ClassInfo* ci = classOf(stripRef(o.type));
+    const ClassInfo* ci = classOfPointee(o.type);
 
     // static member via Class::member
     if (!ci && e.object && e.object->kind == Expr::Kind::Identifier) {
@@ -555,7 +636,7 @@ Transpiler::Val Transpiler::emitCall(const Expr& e) {
     if (callee->kind == Expr::Kind::Member) {
         const std::string& member = callee->member;
         Val recv = emitExpr(*callee->object);
-        const ClassInfo* ci = classOf(stripRef(recv.type));
+        const ClassInfo* ci = classOfPointee(recv.type);
 
         // static: Class::method(...)
         if (!ci && callee->object->kind == Expr::Kind::Identifier) {
@@ -644,7 +725,13 @@ void Transpiler::emitStmt(const Stmt& s, int indent) {
         case Stmt::Kind::Block: emitBlock(s, indent); break;
         case Stmt::Kind::Empty: out_ << pad << ";\n"; break;
         case Stmt::Kind::Expr:
-            out_ << pad << emitExpr(*s.expr).code << ";\n";
+            if (s.expr->kind == Expr::Kind::DeleteExpr)
+                emitDeleteStatement(*s.expr, indent);
+            else if (s.expr->kind == Expr::Kind::Assign &&
+                     s.expr->rhs && s.expr->rhs->kind == Expr::Kind::NewExpr)
+                emitNewAssignment(*s.expr, indent);
+            else
+                out_ << pad << emitExpr(*s.expr).code << ";\n";
             break;
         case Stmt::Kind::Declaration:
             if (s.decl) emitDeclaration(*s.decl, indent);
@@ -745,6 +832,12 @@ void Transpiler::emitBlock(const Stmt& s, int indent) {
 
 void Transpiler::emitDeclaration(const VarDecl& v, int indent) {
     std::string pad = indentStr(indent);
+
+    // heap-allocated pointer:  T* p = new T(args) / new T[n]
+    if (v.init && v.init->kind == Expr::Kind::NewExpr) {
+        emitNewInit(v, *v.init, indent);
+        return;
+    }
 
     // class-type local with constructor call
     const ClassInfo* ci = classOf(v.type);

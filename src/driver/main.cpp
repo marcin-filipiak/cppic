@@ -90,5 +90,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "parse error: %d:%d: %s\n", e.loc.line, e.loc.col,
                      e.message.c_str());
         return 1;
+    } catch (const cppic::TranspileError& e) {
+        std::fprintf(stderr, "transpile error: %d:%d: %s\n", e.loc.line,
+                     e.loc.col, e.message.c_str());
+        return 1;
     }
 }

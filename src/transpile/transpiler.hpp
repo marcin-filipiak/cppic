@@ -66,6 +66,7 @@ private:
     std::string typeToC(const Type& t) const;
     bool isClassType(const TypePtr& t) const;
     const ClassInfo* classOf(const TypePtr& t) const;
+    const ClassInfo* classOfPointee(const TypePtr& t) const;
     TypePtr stripRef(const TypePtr& t) const;
     TypePtr derefType(const TypePtr& t) const;
 
@@ -83,7 +84,13 @@ private:
     void emitStmt(const Stmt& s, int indent);
     void emitBlock(const Stmt& s, int indent);
     void emitDeclaration(const VarDecl& v, int indent);
-    void emitLocalAssignCtor(const Val& target, const Expr& init, int indent);
+
+    // --- heap allocation (new/delete) ---
+    std::string newSizeExpr(const Expr& ne);
+    std::string newCtorCall(const Expr& ne, const std::string& ptrCode);
+    void emitNewInit(const VarDecl& v, const Expr& ne, int indent);
+    void emitNewAssignment(const Expr& as, int indent);
+    void emitDeleteStatement(const Expr& de, int indent);
 
     // --- declaration emission ---
     void emitPrototype(const FunctionDecl& f, const ClassInfo* ci);

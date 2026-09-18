@@ -12,14 +12,12 @@ target_compile_definitions(transpiler_test PRIVATE
 target_link_libraries(transpiler_test PRIVATE cppic_core)
 add_test(NAME transpiler_test COMMAND transpiler_test)
 
+add_executable(preprocess_test preprocess_test.cpp)
+target_link_libraries(preprocess_test PRIVATE cppic_core)
+add_test(NAME preprocess_test COMMAND preprocess_test)
+
 # ---------------------------------------------------------------------------
-# End-to-end host-sim test.
-#
-# Transpile samples/blink.cpp to C with the real `cppic` binary, compile the
-# result together with the runtime in CPPIC_HOST_SIM mode and run it.  The
-# runtime's main() returns non-zero when the sketch never wrote a non-zero
-# PORTB, so a passing test proves the emitted C produces the expected
-# hardware behaviour on the desktop.
+# End-to-end host-sim test (single file: blink).
 # ---------------------------------------------------------------------------
 set(CPPIC_HOSTSIM_DIR ${CMAKE_CURRENT_BINARY_DIR}/hostsim)
 file(MAKE_DIRECTORY ${CPPIC_HOSTSIM_DIR})
@@ -43,6 +41,33 @@ target_compile_definitions(blink_hostsim PRIVATE CPPIC_HOST_SIM)
 target_include_directories(blink_hostsim PRIVATE ${CMAKE_SOURCE_DIR}/runtime)
 add_dependencies(blink_hostsim cppic)
 add_test(NAME hostsim_blink COMMAND blink_hostsim)
+
+# ---------------------------------------------------------------------------
+# End-to-end host-sim test (multi-file: main.cpp + led.cpp + led.h).
+# ---------------------------------------------------------------------------
+set(CPPIC_MULTI_C ${CPPIC_HOSTSIM_DIR}/multi.c)
+add_custom_command(
+  OUTPUT ${CPPIC_MULTI_C}
+  COMMAND $<TARGET_FILE:cppic>
+          --emit ${CMAKE_CURRENT_SOURCE_DIR}/samples/multi/main.cpp
+                  ${CMAKE_CURRENT_SOURCE_DIR}/samples/multi/led.cpp
+          > ${CPPIC_MULTI_C}
+  DEPENDS cppic
+          ${CMAKE_CURRENT_SOURCE_DIR}/samples/multi/main.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/samples/multi/led.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/samples/multi/led.h
+  COMMENT "cppic --emit samples/multi/*.cpp (host-sim multi-file test)"
+  VERBATIM
+)
+
+add_executable(multi_hostsim
+  ${CPPIC_MULTI_C}
+  ${CMAKE_SOURCE_DIR}/runtime/cppic_runtime.c
+)
+target_compile_definitions(multi_hostsim PRIVATE CPPIC_HOST_SIM)
+target_include_directories(multi_hostsim PRIVATE ${CMAKE_SOURCE_DIR}/runtime)
+add_dependencies(multi_hostsim cppic)
+add_test(NAME hostsim_multi COMMAND multi_hostsim)
 
 # ---------------------------------------------------------------------------
 # SDCC backend: blink.hex for a PIC18 (only when sdcc is installed).

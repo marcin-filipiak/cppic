@@ -7,7 +7,7 @@ do pliku HEX dla mikrokontrolerów rodziny PIC18.
 
 ```
 kod.cpp (styl Arduino)                [Transpiler w C++20]
-   │  lexer → parser → AST → emit
+   │  preprocessor → lexer → parser → AST → emit
    ▼
 kod.c + runtime/cppic_runtime.c
    │  sdcc -mpic18
@@ -16,6 +16,9 @@ program.hex  ⭢ wgranie do PIC18
 ```
 
 - **cppic** — transpilator C++ → C (własny front-end, zero zależności zewnętrznych)
+- **preprocessor + linker** — `#include "..."` inline'owane rekurencyjnie,
+  `#define`/`#ifdef`/`#if`/`#elif`/`#else`/`#endif`, a wiele plików sklejanych
+  w jedną jednostkę translacji (wbudowany „linker")
 - **runtime/** — minimalny runtime dla PIC18: emulowane SFR-y (host-sim),
   sterta `new`/`delete`, pętla `setup()`/`loop()` dla symulatora
 - **backend** — SDCC (Small Device C Compiler) zamienia C na Intel HEX dla PIC18
@@ -25,7 +28,7 @@ program.hex  ⭢ wgranie do PIC18
 ```sh
 cmake -B build -G Ninja
 cmake --build build
-ctest --test-dir build --output-on-failure   # 4 testy (w tym end-to-end host-sim)
+ctest --test-dir build --output-on-failure   # 6 testów (w tym end-to-end host-sim)
 ```
 
 ## Szybki start
@@ -69,6 +72,43 @@ build/cppic --lex   tests/samples/blink.cpp   # tokeny
 build/cppic --dump  tests/samples/blink.cpp   # AST
 build/cppic --emit  tests/samples/blink.cpp   # kod C (domyślny tryb)
 ```
+
+## Preprocesor i wbudowany linker
+
+Cppic ma wbudowany uproszczony preprocesor C i „linker" — wiele plików
+`setup()/loop()` i osobnych modułów jest scalanych w jeden plik C.
+
+### Wbudowane dyrektywy preprocesora
+
+| Dyrektywa                               | Obsługa                                                     |
+|-----------------------------------------|-------------------------------------------------------------|
+| `#include "plik.h"` / `<header>`        | rekurencyjne inlinowanie; nieznane `<...>` przekazywane do wygenerowanego C |
+| `#define NAZWA [wartosc]`               | object-like macros (podstawiane w kodzie i w `#if`)         |
+| `#undef NAZWA`                          | usuwa definicję                                             |
+| `#ifdef / #ifndef / #if / #elif / #else / #endif` | `defined()`, `&&`, `\|\|`, `!`, `==`, `!=`, liczby |
+| `#error wiadomosc`                      | błąd (zwraca kod 1 z numerem linii i pliku)                 |
+| `#pragma` / `#line` / inne              | pomijane bezbłędnie                                         |
+
+`#define` z argumentami (`MACRO(a,b)`) nie jest obsługiwane.
+
+### Linkowanie wielu plików
+
+Podaj kilka plików na wywołaniu — scalają się w jedną jednostkę:
+
+```sh
+# buduj i uruchom na host-sim (skrypt)
+scripts/build.sh --hostsim main.cpp led.cpp
+
+# ręcznie
+build/cppic --emit main.cpp led.cpp > program.c
+cc -DCPPIC_HOST_SIM -I runtime -o program \
+    program.c runtime/cppic_runtime.c
+./program
+```
+
+Nagłówki `#include "..."` w każdym z plików są wyszukiwane względem
+katalogu danego pliku (oraz katalogów dodanych `--I dir`).
+Pliki headerowe nie muszą być wymieniane na liście argumentów.
 
 ## Wymagania
 
@@ -126,6 +166,8 @@ sdcc -mpic18 -p18f87k22 -I/usr/share/cppic/runtime \
 
 - [x] Lexer (tokenizer podzbioru C++)
 - [x] Parser + AST
+- [x] Preprocesor: `#include`, `#define`/`#undef`, `#ifdef`/`#if`/`#elif`/`#else`/`#endif`, `#error`
+- [x] Wbudowany linker — wiele plików scalanych w jedną jednostkę translacji
 - [x] Emisja kodu C
 - [x] Name mangling, `this`/`self`, metody → funkcje, klasy → struktury
 - [x] `new`/`delete` → `cppic_malloc`/`cppic_free` (sterta w runtime)

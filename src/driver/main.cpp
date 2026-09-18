@@ -3,6 +3,7 @@
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
 #include "parser/parser.hpp"
+#include "preprocess/preprocessor.hpp"
 #include "transpile/transpiler.hpp"
 
 #include <cstdio>
@@ -13,26 +14,17 @@
 
 namespace {
 
-std::string readFile(const char* path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        std::fprintf(stderr, "cppic: cannot open '%s'\n", path);
-        std::exit(1);
-    }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
-
 enum class Mode { Lex, Dump, Emit }; // Emit = transpile to C
 
 int usage() {
     std::fprintf(stderr,
                  "cppic - C++ -> C transpiler for PIC18 (work in progress)\n\n"
-                 "usage: cppic [--lex|--dump|--emit] <file.cpp>\n"
-                 "  --lex   print tokens\n"
-                 "  --dump  print parsed AST\n"
-                 "  --emit  transpile to C (default for .cpp with setup/loop)\n");
+                 "usage: cppic [--lex|--dump|--emit] [-I dir] <file.cpp> [more.cpp ...]\n"
+                 "  --lex    print tokens\n"
+                 "  --dump   print parsed AST\n"
+                 "  --emit   transpile to C (default for .cpp with setup/loop)\n"
+                 "  -I dir   add an include search directory for #include\n"
+                 "  multiple files are preprocessed and linked into one unit\n");
     return 2;
 }
 
@@ -40,7 +32,8 @@ int usage() {
 
 int main(int argc, char** argv) {
     Mode mode = Mode::Dump;
-    const char* file = nullptr;
+    std::vector<std::string> files;
+    std::vector<std::string> includePaths;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -48,14 +41,18 @@ int main(int argc, char** argv) {
         else if (a == "--dump") mode = Mode::Dump;
         else if (a == "--emit") mode = Mode::Emit;
         else if (a == "-h" || a == "--help") return usage();
-        else file = argv[i];
+        else if (a == "-I" && i + 1 < argc) includePaths.push_back(argv[++i]);
+        else if (a.rfind("-I", 0) == 0 && a.size() > 2) includePaths.push_back(a.substr(2));
+        else files.push_back(a);
     }
-    if (!file) return usage();
-
-    std::string src = readFile(file);
+    if (files.empty()) return usage();
 
     try {
-        cppic::Lexer lexer(std::move(src));
+        cppic::Preprocessor preprocessor;
+        for (const auto& p : includePaths) preprocessor.addIncludePath(p);
+        cppic::PreprocessResult pr = preprocessor.run(files);
+
+        cppic::Lexer lexer(std::move(pr.source));
         auto tokens = lexer.tokenize();
 
         if (mode == Mode::Lex) {
@@ -73,15 +70,36 @@ int main(int argc, char** argv) {
         cppic::Parser parser(std::move(tokens));
         cppic::TranslationUnit tu = parser.parseTranslationUnit();
         if (mode == Mode::Dump) {
-            std::printf("// %s\n", file);
+            std::printf("// %s\n", files.front().c_str());
             for (const auto& d : tu.decls) std::printf("%s", cppic::dumpDecl(*d).c_str());
             return 0;
         }
 
         cppic::Transpiler transpiler;
         std::string c = transpiler.run(tu);
+
+        // Forward `#include <...>` directives that stayed unresolved into the
+        // generated C, right after cppic's own includes.
+        if (!pr.systemIncludes.empty()) {
+            const std::string anchor = "#include \"cppic_runtime.h\"\n";
+            std::size_t pos = c.find(anchor);
+            if (pos != std::string::npos) {
+                std::string incs;
+                for (const auto& n : pr.systemIncludes)
+                    incs += "#include <" + n + ">\n";
+                std::string prefix = c.substr(0, pos + anchor.size());
+                c = prefix + incs + c.substr(pos + anchor.size());
+            }
+        }
         std::fputs(c.c_str(), stdout);
         return 0;
+    } catch (const cppic::PreprocessError& e) {
+        if (e.file.empty())
+            std::fprintf(stderr, "preprocess error: %s\n", e.message.c_str());
+        else
+            std::fprintf(stderr, "preprocess error: %s:%d: %s\n",
+                         e.file.c_str(), e.line, e.message.c_str());
+        return 1;
     } catch (const cppic::LexError& e) {
         std::fprintf(stderr, "lex error: %d:%d: %s\n", e.loc.line, e.loc.col,
                      e.message.c_str());

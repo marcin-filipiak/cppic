@@ -1,7 +1,8 @@
 # Build artifacts
 build/
 build-*/
-dist/
+dist/*
+!dist/*.deb
 cmake-build-*/
 *.o
 *.a

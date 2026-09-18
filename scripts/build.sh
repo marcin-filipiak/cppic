@@ -1,10 +1,12 @@
 #!/usr/bin/env sh
 # cppic build helpers
 #
-#   scripts/build.sh sketch.cpp [..]     build & run on the desktop simulator
-#   scripts/build.sh --hostsim sketch.cpp   (same, explicit)
-#   scripts/build.sh --sdcc sketch.cpp       build a PIC18 Intel HEX with sdcc
+#   scripts/build.sh sketch.cpp [more.cpp ...]   build & run on the desktop simulator
+#   scripts/build.sh --hostsim sketch.cpp [..]   (same, explicit)
+#   scripts/build.sh --sdcc sketch.cpp [..]      build a PIC18 Intel HEX with sdcc
 #
+# Multiple source files are preprocessed and linked into one translation unit;
+# relative #include "..." headers are resolved and inlined automatically.
 # The host simulator compiles the generated C with the runtime in
 # CPPIC_HOST_SIM mode; the program runs and exits non-zero if the sketch
 # never wrote a non-zero PORTB.  The SDCC backend requires `sdcc` on PATH
@@ -40,23 +42,19 @@ done
 
 case "$MODE" in
     hostsim)
-        for src in "$@"; do
-            base=$(basename "$src" .cpp)
-            out="${base}_host"
-            "$CPPIC" --emit "$src" > "$base.c"
-            cc -DCPPIC_HOST_SIM -I "$RUNTIME" -o "$out" \
-                "$base.c" "$RUNTIME/cppic_runtime.c"
-            echo "== $src -> $base.c -> $out"
-            "./$out" && echo "   $base: PORTB toggled OK"
-        done
+        base=$(basename "$1" .cpp)
+        out="${base}_host"
+        "$CPPIC" --emit "$@" > "$base.c"
+        cc -DCPPIC_HOST_SIM -I "$RUNTIME" -o "$out" \
+            "$base.c" "$RUNTIME/cppic_runtime.c"
+        echo "== [$*] -> $base.c -> $out"
+        "./$out" && echo "   $base: PORTB toggled OK"
         ;;
     sdcc)
-        for src in "$@"; do
-            base=$(basename "$src" .cpp)
-            "$CPPIC" --emit "$src" > "$base.c"
-            sdcc -mpic18 -p"$SDCC_DEVICE" -I "$RUNTIME" \
-                "$base.c" "$RUNTIME/cppic_runtime.c"
-            echo "== $src -> $base.hex (${SDCC_DEVICE})"
-        done
+        base=$(basename "$1" .cpp)
+        "$CPPIC" --emit "$@" > "$base.c"
+        sdcc -mpic18 -p"$SDCC_DEVICE" -I "$RUNTIME" \
+            "$base.c" "$RUNTIME/cppic_runtime.c"
+        echo "== [$*] -> $base.hex (${SDCC_DEVICE})"
         ;;
 esac

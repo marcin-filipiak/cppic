@@ -17,6 +17,7 @@ add_library(cppic_core
   src/parser/parser.cpp
   src/ast/dump.cpp
   src/transpile/transpiler.cpp
+  src/preprocess/preprocessor.cpp
 )
 target_include_directories(cppic_core PUBLIC src)
 

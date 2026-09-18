@@ -115,11 +115,14 @@ std::string Transpiler::classCName(const std::string& name) const {
 
 std::string Transpiler::mangleFunction(const FunctionDecl& f, const ClassInfo* ci) {
     if (!ci) return mangleName(f.name);
+    std::string method = f.name;
+    std::size_t pos = method.rfind("::");
+    if (pos != std::string::npos) method = method.substr(pos + 2);
     if (f.isConstructor) return ci->cname + "__ctor";
     if (f.isDestructor) return ci->cname + "__dtor";
-    if (f.name.rfind("operator", 0) == 0)
-        return ci->cname + "__" + mangleOperator(f.name);
-    return ci->cname + "__" + f.name;
+    if (method.rfind("operator", 0) == 0)
+        return ci->cname + "__" + mangleOperator(method);
+    return ci->cname + "__" + method;
 }
 
 // ---------------------------------------------------------------------------
@@ -1018,6 +1021,16 @@ std::string Transpiler::run(const TranslationUnit& tu) {
     for (const auto& [name, fns] : freeFuncs_)
         for (auto* f : fns)
             if (f->body) emitPrototype(*f, nullptr);
+    for (const auto& d : tu.decls) {
+        if (d->kind != Decl::Kind::Function) continue;
+        const FunctionDecl& f = *d->func;
+        auto pos = f.name.find("::");
+        if (pos == std::string::npos) continue;
+        std::string cls = f.name.substr(0, pos);
+        auto it = classes_.find(cls);
+        if (it == classes_.end()) continue;
+        emitPrototype(f, &it->second);
+    }
     out_ << "\n";
 
     // method definitions (inline in class)

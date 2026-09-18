@@ -3,12 +3,17 @@
 cppic \- C++ to C transpiler for PIC18 microcontrollers
 .SH SYNOPSIS
 .B cppic
-[\fI--lex\fR | \fI--dump\fR | \fI--emit\fR] \fIfile.cpp\fR
+[\fI--lex\fR | \fI--dump\fR | \fI--emit\fR] [\fI-I dir\fR]
+\fIfile.cpp\fR [\fImore.cpp\fR ...]
 .SH DESCRIPTION
 .B cppic
 compiles the C++ subset used in Arduino sketches (object-oriented C++)
 into plain C suitable for SDCC and 8-bit PIC18 microcontrollers.
 The generated C is self-contained and includes the PIC18 runtime.
+.PP
+Input files are preprocessed (a C-preprocessor subset: #include, #define,
+#ifdef/#if/#elif/#else/#endif, #error) and linked into one translation
+unit, so sketches split across several files are supported.
 .PP
 Modes:
 .TP
@@ -20,11 +25,20 @@ print the parsed AST.
 .TP
 .BR \-\-emit
 transpile to C (default for .cpp files with setup/loop).
+.TP
+.BR \-I " dir"
+add a directory to the #include search path.
 .SH EXAMPLES
 Generate C from an Arduino-style sketch:
 .PP
 .nf
     cppic --emit sketch.cpp > sketch.c
+.fi
+.PP
+Link several files (headers are resolved via #include):
+.PP
+.nf
+    cppic --emit main.cpp led.cpp > program.c
 .fi
 .PP
 Build a PIC18 Intel HEX image (requires the sdcc package):
